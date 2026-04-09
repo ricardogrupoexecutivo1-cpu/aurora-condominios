@@ -75,6 +75,10 @@ export default function RootLayout({
               <a href="/relatorios" style={styles.link}>
                 Relatórios
               </a>
+
+              <a href="/planos" style={styles.link}>
+                Planos
+              </a>
             </nav>
           </div>
         </header>
