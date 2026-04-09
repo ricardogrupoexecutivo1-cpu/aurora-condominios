@@ -1,52 +1,129 @@
 "use client";
 
-import { CSSProperties, useState } from "react";
+import { useMemo, useState } from "react";
 
-type PlanType = "start" | "pro" | "premium";
+type PlanCode = "start" | "pro" | "premium_multi";
 
-type ApiResponse = {
-  ok: boolean;
+type ApiSuccess = {
+  ok: true;
   message?: string;
-  error?: string;
-  details?: string[];
-  item?: {
+  checkoutUrl?: string | null;
+  redirectTo?: string | null;
+  nextAction?: "activated" | "checkout" | "configure_checkout";
+  subscription?: {
     id: string;
-    plan: PlanType;
+    plan: PlanCode;
     status: string;
-    billing_cycle: string;
     amount: number;
     checkout_url?: string | null;
+    customer_name?: string | null;
+    customer_email?: string | null;
+    customer_whatsapp?: string | null;
   };
 };
+
+type ApiError = {
+  ok: false;
+  error?: string;
+  details?: string[];
+};
+
+type PlanCard = {
+  code: PlanCode;
+  title: string;
+  price: string;
+  badge?: string;
+  description: string[];
+  buttonLabel: string;
+  paid: boolean;
+};
+
+const PLANS: PlanCard[] = [
+  {
+    code: "start",
+    title: "Aurora Start",
+    price: "Grátis",
+    description: [
+      "Até 5 unidades",
+      "Cadastro básico",
+      "Energia simples",
+      "Comunicação limitada",
+    ],
+    buttonLabel: "Começar grátis",
+    paid: false,
+  },
+  {
+    code: "pro",
+    title: "Aurora PRO Gestão",
+    price: "R$ 29,90/mês",
+    badge: "Mais vendido",
+    description: [
+      "Unidades ilimitadas",
+      "Energia completa",
+      "Cobranças completas",
+      "Comunicação liberada",
+      "Melhorias com votação",
+    ],
+    buttonLabel: "Assinar PRO",
+    paid: true,
+  },
+  {
+    code: "premium_multi",
+    title: "Aurora Premium Multi",
+    price: "R$ 79,90/mês",
+    description: [
+      "Tudo do PRO",
+      "Múltiplos condomínios",
+      "Relatórios avançados",
+      "Suporte prioritário",
+    ],
+    buttonLabel: "Assinar Premium",
+    paid: true,
+  },
+];
+
+function onlyDigits(value: string) {
+  return value.replace(/\D/g, "");
+}
 
 export default function PlanosPage() {
   const [customerName, setCustomerName] = useState("");
   const [customerEmail, setCustomerEmail] = useState("");
   const [customerWhatsapp, setCustomerWhatsapp] = useState("");
+  const [loadingPlan, setLoadingPlan] = useState<PlanCode | null>(null);
+  const [feedback, setFeedback] = useState<{
+    type: "success" | "error" | "info";
+    text: string;
+  } | null>(null);
 
-  const [loadingPlan, setLoadingPlan] = useState<PlanType | null>(null);
-  const [message, setMessage] = useState("");
-  const [error, setError] = useState("");
+  const normalizedWhatsapp = useMemo(
+    () => onlyDigits(customerWhatsapp),
+    [customerWhatsapp]
+  );
 
-  async function handleSubscribe(plan: PlanType) {
-    setMessage("");
-    setError("");
+  async function handleSubscribe(plan: PlanCode) {
+    const selectedPlan = PLANS.find((item) => item.code === plan);
+    if (!selectedPlan) return;
 
-    const hasContact =
-      customerName.trim() || customerEmail.trim() || customerWhatsapp.trim();
+    const isPaidPlan = selectedPlan.paid;
 
-    if ((plan === "pro" || plan === "premium") && !hasContact) {
-      setError(
-        "Para planos pagos, preencha pelo menos nome, e-mail ou WhatsApp antes de continuar."
-      );
+    if (isPaidPlan && !normalizedWhatsapp) {
+      setFeedback({
+        type: "error",
+        text: "Para planos pagos, informe um WhatsApp válido antes de continuar.",
+      });
       return;
     }
 
     setLoadingPlan(plan);
+    setFeedback({
+      type: "info",
+      text: isPaidPlan
+        ? "Registrando seu plano e preparando o checkout..."
+        : "Ativando seu plano gratuito...",
+    });
 
     try {
-      const amount = plan === "pro" ? 29.9 : plan === "premium" ? 79.9 : 0;
-
       const response = await fetch("/api/subscriptions", {
         method: "POST",
         headers: {
@@ -54,53 +131,45 @@ export default function PlanosPage() {
         },
         body: JSON.stringify({
           plan,
-          status: plan === "start" ? "active" : "pending",
-          billing_cycle: "monthly",
-          amount,
-          payment_provider: plan === "start" ? "internal" : "manual",
-          customer_name: customerName.trim() || null,
-          customer_email: customerEmail.trim() || null,
-          customer_whatsapp: customerWhatsapp.trim() || null,
-          started_at: new Date().toISOString(),
-          metadata: {
-            source: "planos_page",
-            product: "aurora_condominios",
-          },
+          customerName,
+          customerEmail,
+          customerWhatsapp: normalizedWhatsapp,
         }),
       });
 
-      const data = (await response.json()) as ApiResponse;
+      const result = (await response.json()) as ApiSuccess | ApiError;
 
-      if (!response.ok || !data.ok) {
-        const detailText =
-          data?.details && data.details.length
-            ? ` ${data.details.join(" ")}`
-            : "";
-
-        throw new Error(
-          data?.error || `Falha ao criar assinatura.${detailText}`
-        );
+      if (!response.ok || !result?.ok) {
+        const errorMessage =
+          (result as ApiError)?.details?.join(" ") ||
+          (result as ApiError)?.error ||
+          "Não foi possível registrar o plano agora.";
+        setFeedback({
+          type: "error",
+          text: errorMessage,
+        });
+        return;
       }
 
-      if (plan === "start") {
-        setMessage(
-          "Plano Aurora Start ativado com sucesso. A base da assinatura já foi registrada."
-        );
-      } else if (plan === "pro") {
-        setMessage(
-          "Plano Aurora PRO Gestão registrado com sucesso. Próximo passo: conectar checkout e liberação automática."
-        );
-      } else {
-        setMessage(
-          "Plano Aurora Premium Multi registrado com sucesso. Próximo passo: conectar checkout e liberação automática."
-        );
-      }
+      const success = result as ApiSuccess;
 
-      setCustomerName("");
-      setCustomerEmail("");
-      setCustomerWhatsapp("");
-    } catch (err: any) {
-      setError(err?.message || "Erro ao criar assinatura.");
+      setFeedback({
+        type: "success",
+        text:
+          success.message ||
+          "Plano registrado com sucesso. Aguarde o próximo passo.",
+      });
+
+      if (success.nextAction === "checkout" && success.redirectTo) {
+        window.location.href = success.redirectTo;
+        return;
+      }
+    } catch (error) {
+      console.error("ERRO AO REGISTRAR PLANO:", error);
+      setFeedback({
+        type: "error",
+        text: "O sistema está em constante atualização e pode ter momentos de instabilidade durante melhorias.",
+      });
     } finally {
       setLoadingPlan(null);
     }
@@ -108,411 +177,383 @@ export default function PlanosPage() {
 
   return (
     <main style={styles.page}>
-      <section style={styles.hero}>
-        <div style={styles.heroBadge}>Planos Aurora Condomínios</div>
-        <h1 style={styles.title}>
-          Escolha o plano ideal e comece a organizar seu condomínio com gestão
-          profissional.
-        </h1>
-        <p style={styles.subtitle}>
-          Estrutura comercial pronta para evolução com assinatura, cobrança e
-          liberação automática por plano.
-        </p>
-      </section>
-
-      <section style={styles.formSection}>
-        <div style={styles.formHeader}>
-          <h2 style={styles.formTitle}>Dados para ativação do plano</h2>
-          <p style={styles.formText}>
-            Para os planos pagos, informe pelo menos um dado de contato.
-            O sistema está em constante atualização e pode ter momentos de
-            instabilidade durante melhorias.
+      <section style={styles.wrapper}>
+        <div style={styles.hero}>
+          <div style={styles.heroBadge}>Planos</div>
+          <h1 style={styles.heroTitle}>Planos Aurora Condomínios</h1>
+          <p style={styles.heroText}>
+            Escolha o plano ideal e comece a organizar seu condomínio com gestão
+            profissional.
+          </p>
+          <p style={styles.heroSubtext}>
+            Estrutura comercial pronta para evolução com assinatura, cobrança e
+            liberação automática por plano.
           </p>
         </div>
 
-        <div style={styles.formGrid}>
-          <div style={styles.field}>
-            <label style={styles.label}>Nome do responsável</label>
-            <input
-              style={styles.input}
-              value={customerName}
-              onChange={(e) => setCustomerName(e.target.value)}
-              placeholder="Ex.: Síndico responsável"
-            />
+        <section style={styles.formCard}>
+          <div style={styles.formCardHeader}>
+            <div>
+              <h2 style={styles.sectionTitle}>Dados para ativação do plano</h2>
+              <p style={styles.sectionText}>
+                Para os planos pagos, informe pelo menos um dado de contato. O
+                sistema está em constante atualização e pode ter momentos de
+                instabilidade durante melhorias.
+              </p>
+            </div>
           </div>
 
-          <div style={styles.field}>
-            <label style={styles.label}>E-mail</label>
-            <input
-              style={styles.input}
-              value={customerEmail}
-              onChange={(e) => setCustomerEmail(e.target.value)}
-              placeholder="Ex.: contato@condominio.com"
-            />
+          <div style={styles.formGrid}>
+            <label style={styles.label}>
+              <span style={styles.labelText}>Nome do responsável</span>
+              <input
+                type="text"
+                value={customerName}
+                onChange={(event) => setCustomerName(event.target.value)}
+                placeholder="Ex.: Síndico responsável"
+                style={styles.input}
+              />
+            </label>
+
+            <label style={styles.label}>
+              <span style={styles.labelText}>E-mail</span>
+              <input
+                type="email"
+                value={customerEmail}
+                onChange={(event) => setCustomerEmail(event.target.value)}
+                placeholder="Ex.: contato@condominio.com"
+                style={styles.input}
+              />
+            </label>
+
+            <label style={styles.label}>
+              <span style={styles.labelText}>WhatsApp</span>
+              <input
+                type="text"
+                value={customerWhatsapp}
+                onChange={(event) => setCustomerWhatsapp(event.target.value)}
+                placeholder="Ex.: (31) 99999-9999"
+                style={styles.input}
+              />
+            </label>
           </div>
 
-          <div style={styles.field}>
-            <label style={styles.label}>WhatsApp</label>
-            <input
-              style={styles.input}
-              value={customerWhatsapp}
-              onChange={(e) => setCustomerWhatsapp(e.target.value)}
-              placeholder="Ex.: (31) 99999-9999"
-            />
-          </div>
-        </div>
+          <p style={styles.helperText}>
+            Para planos pagos, preencha pelo menos nome, e-mail ou WhatsApp
+            antes de continuar.
+          </p>
 
-        {message ? <div style={styles.successBox}>{message}</div> : null}
-        {error ? <div style={styles.errorBox}>{error}</div> : null}
-      </section>
+          {feedback ? (
+            <div
+              style={{
+                ...styles.feedback,
+                ...(feedback.type === "success"
+                  ? styles.feedbackSuccess
+                  : feedback.type === "error"
+                    ? styles.feedbackError
+                    : styles.feedbackInfo),
+              }}
+            >
+              {feedback.text}
+            </div>
+          ) : null}
+        </section>
 
-      <section style={styles.grid}>
-        <article style={styles.card}>
-          <div style={styles.planHeader}>
-            <h2 style={styles.planTitle}>Aurora Start</h2>
-            <p style={styles.priceFree}>Grátis</p>
-          </div>
+        <section style={styles.cardsGrid}>
+          {PLANS.map((plan) => {
+            const isLoading = loadingPlan === plan.code;
+            const isFeatured = plan.code === "pro";
 
-          <ul style={styles.list}>
-            <li>Até 5 unidades</li>
-            <li>Cadastro básico</li>
-            <li>Energia simples</li>
-            <li>Comunicação limitada</li>
-          </ul>
+            return (
+              <article
+                key={plan.code}
+                style={{
+                  ...styles.card,
+                  ...(isFeatured ? styles.cardFeatured : null),
+                }}
+              >
+                {plan.badge ? <div style={styles.badge}>{plan.badge}</div> : null}
 
-          <button
-            type="button"
-            style={styles.buttonSecondary}
-            onClick={() => handleSubscribe("start")}
-            disabled={loadingPlan !== null}
-          >
-            {loadingPlan === "start" ? "Ativando..." : "Começar grátis"}
-          </button>
-        </article>
+                <h2 style={styles.cardTitle}>{plan.title}</h2>
+                <div style={styles.cardPrice}>{plan.price}</div>
 
-        <article style={styles.cardFeatured}>
-          <div style={styles.featuredTag}>Mais vendido</div>
+                <ul style={styles.featureList}>
+                  {plan.description.map((item) => (
+                    <li key={item} style={styles.featureItem}>
+                      <span style={styles.featureDot}>•</span>
+                      <span>{item}</span>
+                    </li>
+                  ))}
+                </ul>
 
-          <div style={styles.planHeader}>
-            <h2 style={styles.planTitle}>Aurora PRO Gestão</h2>
-            <p style={styles.price}>R$ 29,90/mês</p>
-          </div>
+                <button
+                  type="button"
+                  onClick={() => handleSubscribe(plan.code)}
+                  disabled={Boolean(loadingPlan)}
+                  style={{
+                    ...styles.button,
+                    ...(plan.code === "start"
+                      ? styles.buttonGhost
+                      : styles.buttonPrimary),
+                    ...(isLoading ? styles.buttonDisabled : null),
+                  }}
+                >
+                  {isLoading ? "Processando..." : plan.buttonLabel}
+                </button>
+              </article>
+            );
+          })}
+        </section>
 
-          <ul style={styles.list}>
-            <li>Unidades ilimitadas</li>
-            <li>Energia completa</li>
-            <li>Cobranças completas</li>
-            <li>Comunicação liberada</li>
-            <li>Melhorias com votação</li>
-          </ul>
-
-          <button
-            type="button"
-            style={styles.buttonPrimary}
-            onClick={() => handleSubscribe("pro")}
-            disabled={loadingPlan !== null}
-          >
-            {loadingPlan === "pro" ? "Registrando..." : "Assinar PRO"}
-          </button>
-        </article>
-
-        <article style={styles.card}>
-          <div style={styles.planHeader}>
-            <h2 style={styles.planTitle}>Aurora Premium Multi</h2>
-            <p style={styles.price}>R$ 79,90/mês</p>
-          </div>
-
-          <ul style={styles.list}>
-            <li>Tudo do PRO</li>
-            <li>Múltiplos condomínios</li>
-            <li>Relatórios avançados</li>
-            <li>Suporte prioritário</li>
-          </ul>
-
-          <button
-            type="button"
-            style={styles.buttonDark}
-            onClick={() => handleSubscribe("premium")}
-            disabled={loadingPlan !== null}
-          >
-            {loadingPlan === "premium"
-              ? "Registrando..."
-              : "Assinar Premium"}
-          </button>
-        </article>
-      </section>
-
-      <section style={styles.noticeBox}>
-        <h3 style={styles.noticeTitle}>Pagamento recorrente automático</h3>
-        <p style={styles.noticeText}>
-          Após a confirmação do pagamento, o acesso será liberado e mantido
-          enquanto a assinatura estiver ativa. A integração de checkout será
-          conectada na próxima etapa.
-        </p>
+        <section style={styles.footerCard}>
+          <h3 style={styles.footerTitle}>Pagamento recorrente automático</h3>
+          <p style={styles.footerText}>
+            Após a confirmação do pagamento, o acesso será liberado e mantido
+            enquanto a assinatura estiver ativa. A integração de checkout será
+            conectada na próxima etapa.
+          </p>
+        </section>
       </section>
     </main>
   );
 }
 
-const styles: Record<string, CSSProperties> = {
+const styles: Record<string, React.CSSProperties> = {
   page: {
     minHeight: "100vh",
-    padding: "32px 16px 56px",
     background:
-      "linear-gradient(180deg, #f8fbff 0%, #eef5ff 55%, #e8f1ff 100%)",
-    color: "#0f172a",
+      "linear-gradient(180deg, #f4f8fc 0%, #eef4fb 45%, #e8f1fb 100%)",
+    padding: "32px 16px 56px",
+    color: "#142433",
   },
-
-  hero: {
-    maxWidth: "1100px",
-    margin: "0 auto 24px auto",
-    textAlign: "center",
-  },
-
-  heroBadge: {
-    display: "inline-block",
-    padding: "8px 14px",
-    borderRadius: "999px",
-    background: "#e0ecff",
-    color: "#1d4ed8",
-    border: "1px solid #bfdbfe",
-    fontSize: "13px",
-    fontWeight: 800,
-    marginBottom: "14px",
-  },
-
-  title: {
-    margin: "0 auto 12px auto",
-    maxWidth: "880px",
-    fontSize: "clamp(28px, 4vw, 44px)",
-    lineHeight: 1.1,
-    fontWeight: 800,
-    color: "#0f172a",
-  },
-
-  subtitle: {
+  wrapper: {
+    width: "100%",
+    maxWidth: 1180,
     margin: "0 auto",
-    maxWidth: "760px",
-    color: "#475569",
-    fontSize: "16px",
-    lineHeight: 1.7,
   },
-
-  formSection: {
-    maxWidth: "1100px",
-    margin: "0 auto 26px auto",
-    padding: "24px",
-    borderRadius: "24px",
-    background: "#ffffff",
-    border: "1px solid #dbe4f0",
-    boxShadow: "0 20px 40px rgba(15, 23, 42, 0.06)",
+  hero: {
+    background: "linear-gradient(135deg, #ffffff 0%, #f4f9ff 100%)",
+    border: "1px solid rgba(66, 124, 171, 0.14)",
+    borderRadius: 28,
+    padding: "28px 24px",
+    boxShadow: "0 18px 50px rgba(31, 80, 124, 0.08)",
+    marginBottom: 24,
   },
-
-  formHeader: {
-    marginBottom: "18px",
-  },
-
-  formTitle: {
-    margin: "0 0 8px 0",
-    fontSize: "24px",
+  heroBadge: {
+    display: "inline-flex",
+    padding: "6px 12px",
+    borderRadius: 999,
+    background: "rgba(24, 119, 242, 0.08)",
+    border: "1px solid rgba(24, 119, 242, 0.16)",
+    color: "#1565c0",
+    fontSize: 13,
     fontWeight: 800,
-    color: "#0f172a",
+    letterSpacing: 0.3,
+    marginBottom: 12,
   },
-
-  formText: {
+  heroTitle: {
     margin: 0,
-    fontSize: "14px",
-    lineHeight: 1.7,
-    color: "#64748b",
+    fontSize: "clamp(28px, 4vw, 42px)",
+    lineHeight: 1.08,
+    fontWeight: 900,
+    color: "#102030",
   },
-
+  heroText: {
+    marginTop: 14,
+    marginBottom: 8,
+    color: "#31485d",
+    fontSize: 17,
+    lineHeight: 1.6,
+    maxWidth: 760,
+  },
+  heroSubtext: {
+    margin: 0,
+    color: "#567086",
+    fontSize: 15,
+    lineHeight: 1.6,
+    maxWidth: 780,
+  },
+  formCard: {
+    background: "#ffffff",
+    border: "1px solid rgba(66, 124, 171, 0.14)",
+    borderRadius: 24,
+    padding: 22,
+    boxShadow: "0 18px 50px rgba(31, 80, 124, 0.06)",
+    marginBottom: 24,
+  },
+  formCardHeader: {
+    marginBottom: 16,
+  },
+  sectionTitle: {
+    margin: 0,
+    fontSize: 22,
+    fontWeight: 900,
+    color: "#102030",
+  },
+  sectionText: {
+    marginTop: 10,
+    marginBottom: 0,
+    color: "#5b7287",
+    lineHeight: 1.6,
+  },
   formGrid: {
     display: "grid",
-    gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
-    gap: "14px",
+    gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))",
+    gap: 14,
   },
-
-  field: {
+  label: {
     display: "flex",
     flexDirection: "column",
-    gap: "8px",
+    gap: 8,
   },
-
-  label: {
-    fontSize: "13px",
-    fontWeight: 700,
-    color: "#334155",
+  labelText: {
+    fontSize: 14,
+    fontWeight: 800,
+    color: "#1e3447",
   },
-
   input: {
-    minHeight: "48px",
-    borderRadius: "12px",
-    border: "1px solid #dbe4f0",
-    background: "#f8fbff",
-    color: "#0f172a",
+    height: 50,
+    borderRadius: 14,
+    border: "1px solid #d6e3ef",
+    background: "#f9fcff",
+    color: "#173042",
     padding: "0 14px",
     outline: "none",
-    fontSize: "14px",
+    fontSize: 15,
+    boxShadow: "inset 0 1px 2px rgba(15, 23, 42, 0.03)",
   },
-
-  successBox: {
-    marginTop: "16px",
+  helperText: {
+    marginTop: 14,
+    marginBottom: 0,
+    color: "#6c8398",
+    fontSize: 14,
+  },
+  feedback: {
+    marginTop: 16,
+    borderRadius: 14,
     padding: "14px 16px",
-    borderRadius: "14px",
-    background: "#ecfdf5",
-    border: "1px solid #86efac",
-    color: "#166534",
-    fontWeight: 700,
+    fontWeight: 800,
+    lineHeight: 1.5,
   },
-
-  errorBox: {
-    marginTop: "16px",
-    padding: "14px 16px",
-    borderRadius: "14px",
-    background: "#fef2f2",
-    border: "1px solid #fca5a5",
-    color: "#b91c1c",
-    fontWeight: 700,
+  feedbackSuccess: {
+    background: "#edf9f0",
+    border: "1px solid #bfe8c8",
+    color: "#1f6f35",
   },
-
-  grid: {
-    maxWidth: "1100px",
-    margin: "0 auto",
+  feedbackError: {
+    background: "#fff1f1",
+    border: "1px solid #f2c6c6",
+    color: "#a02b2b",
+  },
+  feedbackInfo: {
+    background: "#eef6ff",
+    border: "1px solid #c8def7",
+    color: "#1d5f9d",
+  },
+  cardsGrid: {
     display: "grid",
-    gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))",
-    gap: "20px",
+    gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))",
+    gap: 18,
   },
-
   card: {
     position: "relative",
-    display: "flex",
-    flexDirection: "column",
-    justifyContent: "space-between",
-    padding: "24px",
-    borderRadius: "24px",
     background: "#ffffff",
-    border: "1px solid #dbe4f0",
-    boxShadow: "0 16px 36px rgba(15, 23, 42, 0.06)",
-    minHeight: "390px",
+    border: "1px solid rgba(66, 124, 171, 0.14)",
+    borderRadius: 24,
+    padding: 24,
+    boxShadow: "0 18px 50px rgba(31, 80, 124, 0.06)",
   },
-
   cardFeatured: {
-    position: "relative",
+    border: "1px solid rgba(43, 149, 255, 0.35)",
+    boxShadow: "0 22px 60px rgba(33, 111, 177, 0.12)",
+    transform: "translateY(-2px)",
+  },
+  badge: {
+    display: "inline-flex",
+    marginBottom: 14,
+    padding: "6px 12px",
+    borderRadius: 999,
+    background: "linear-gradient(135deg, #1ea7ff 0%, #1572ff 100%)",
+    color: "#ffffff",
+    fontSize: 12,
+    fontWeight: 900,
+    textTransform: "uppercase",
+    letterSpacing: 0.35,
+  },
+  cardTitle: {
+    margin: 0,
+    fontSize: 24,
+    fontWeight: 900,
+    color: "#102030",
+  },
+  cardPrice: {
+    marginTop: 12,
+    marginBottom: 18,
+    fontSize: 30,
+    fontWeight: 900,
+    color: "#1565c0",
+  },
+  featureList: {
+    listStyle: "none",
+    padding: 0,
+    margin: 0,
+    display: "grid",
+    gap: 10,
+  },
+  featureItem: {
     display: "flex",
-    flexDirection: "column",
-    justifyContent: "space-between",
-    padding: "24px",
-    borderRadius: "24px",
-    background: "linear-gradient(180deg, #f8fbff 0%, #eef6ff 100%)",
-    border: "2px solid #93c5fd",
-    boxShadow: "0 18px 40px rgba(37, 99, 235, 0.10)",
-    minHeight: "390px",
+    alignItems: "flex-start",
+    gap: 8,
+    color: "#486175",
+    lineHeight: 1.5,
   },
-
-  featuredTag: {
-    position: "absolute",
-    top: "16px",
-    right: "16px",
-    padding: "6px 10px",
-    borderRadius: "999px",
-    background: "#dbeafe",
-    color: "#1d4ed8",
-    fontSize: "12px",
-    fontWeight: 800,
-    border: "1px solid #93c5fd",
+  featureDot: {
+    color: "#1e88e5",
+    fontWeight: 900,
   },
-
-  planHeader: {
-    marginBottom: "18px",
+  button: {
+    width: "100%",
+    marginTop: 22,
+    height: 50,
+    borderRadius: 14,
+    cursor: "pointer",
+    fontWeight: 900,
+    fontSize: 15,
+    transition: "transform 0.15s ease, opacity 0.15s ease",
   },
-
-  planTitle: {
-    margin: "0 0 8px 0",
-    fontSize: "26px",
-    fontWeight: 800,
-    color: "#0f172a",
-  },
-
-  price: {
-    margin: 0,
-    fontSize: "28px",
-    fontWeight: 800,
-    color: "#0f172a",
-  },
-
-  priceFree: {
-    margin: 0,
-    fontSize: "28px",
-    fontWeight: 800,
-    color: "#16a34a",
-  },
-
-  list: {
-    margin: "0 0 24px 0",
-    paddingLeft: "20px",
-    lineHeight: 1.9,
-    color: "#334155",
-    flex: 1,
-  },
-
   buttonPrimary: {
-    width: "100%",
-    minHeight: "50px",
-    borderRadius: "14px",
-    fontWeight: 800,
-    fontSize: "15px",
-    background: "linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%)",
-    color: "#ffffff",
     border: "none",
-    cursor: "pointer",
-    boxShadow: "0 12px 24px rgba(37, 99, 235, 0.22)",
-  },
-
-  buttonSecondary: {
-    width: "100%",
-    minHeight: "50px",
-    borderRadius: "14px",
-    fontWeight: 800,
-    fontSize: "15px",
-    background: "#ffffff",
-    color: "#1d4ed8",
-    border: "1px solid #bfdbfe",
-    cursor: "pointer",
-  },
-
-  buttonDark: {
-    width: "100%",
-    minHeight: "50px",
-    borderRadius: "14px",
-    fontWeight: 800,
-    fontSize: "15px",
-    background: "#0f172a",
+    background: "linear-gradient(135deg, #24b0ff 0%, #156ef5 100%)",
     color: "#ffffff",
-    border: "none",
-    cursor: "pointer",
+    boxShadow: "0 12px 24px rgba(21, 110, 245, 0.18)",
   },
-
-  noticeBox: {
-    maxWidth: "1100px",
-    margin: "26px auto 0 auto",
-    padding: "22px",
-    borderRadius: "22px",
+  buttonGhost: {
+    border: "1px solid #d7e4ef",
+    background: "#f8fbff",
+    color: "#163045",
+  },
+  buttonDisabled: {
+    opacity: 0.7,
+    cursor: "not-allowed",
+  },
+  footerCard: {
+    marginTop: 24,
     background: "#ffffff",
-    border: "1px solid #dbe4f0",
-    boxShadow: "0 16px 36px rgba(15, 23, 42, 0.05)",
+    border: "1px solid rgba(66, 124, 171, 0.14)",
+    borderRadius: 24,
+    padding: 20,
+    boxShadow: "0 18px 50px rgba(31, 80, 124, 0.06)",
   },
-
-  noticeTitle: {
-    margin: "0 0 8px 0",
-    fontSize: "20px",
-    fontWeight: 800,
-    color: "#0f172a",
-  },
-
-  noticeText: {
+  footerTitle: {
     margin: 0,
-    color: "#64748b",
-    lineHeight: 1.7,
-    fontSize: "14px",
+    fontSize: 18,
+    fontWeight: 900,
+    color: "#102030",
+  },
+  footerText: {
+    marginTop: 10,
+    marginBottom: 0,
+    color: "#5b7287",
+    lineHeight: 1.6,
   },
 };
