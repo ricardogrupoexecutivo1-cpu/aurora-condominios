@@ -110,7 +110,7 @@ export default function PlanosPage() {
     if (isPaidPlan && !normalizedWhatsapp) {
       setFeedback({
         type: "error",
-        text: "Para planos pagos, informe um WhatsApp válido antes de continuar.",
+        text: "Para assinar os planos pagos, informe um WhatsApp válido antes de continuar.",
       });
       return;
     }
@@ -196,9 +196,8 @@ export default function PlanosPage() {
             <div>
               <h2 style={styles.sectionTitle}>Dados para ativação do plano</h2>
               <p style={styles.sectionText}>
-                Para os planos pagos, informe pelo menos um dado de contato. O
-                sistema está em constante atualização e pode ter momentos de
-                instabilidade durante melhorias.
+                Para os planos pagos, informe seu WhatsApp para continuar com a
+                assinatura. Nome e e-mail ajudam no cadastro e no suporte.
               </p>
             </div>
           </div>
@@ -239,8 +238,8 @@ export default function PlanosPage() {
           </div>
 
           <p style={styles.helperText}>
-            Para planos pagos, preencha pelo menos nome, e-mail ou WhatsApp
-            antes de continuar.
+            Planos pagos exigem WhatsApp válido. O plano grátis pode ser iniciado
+            imediatamente.
           </p>
 
           {feedback ? (
@@ -280,7 +279,7 @@ export default function PlanosPage() {
                 <ul style={styles.featureList}>
                   {plan.description.map((item) => (
                     <li key={item} style={styles.featureItem}>
-                      <span style={styles.featureDot}>•</span>
+                      <span style={styles.featureDot}>✓</span>
                       <span>{item}</span>
                     </li>
                   ))}
@@ -309,8 +308,8 @@ export default function PlanosPage() {
           <h3 style={styles.footerTitle}>Pagamento recorrente automático</h3>
           <p style={styles.footerText}>
             Após a confirmação do pagamento, o acesso será liberado e mantido
-            enquanto a assinatura estiver ativa. A integração de checkout será
-            conectada na próxima etapa.
+            enquanto a assinatura estiver ativa. O sistema está em constante
+            atualização e pode ter momentos de instabilidade durante melhorias.
           </p>
         </section>
       </section>
@@ -427,6 +426,7 @@ const styles: Record<string, React.CSSProperties> = {
     marginBottom: 0,
     color: "#6c8398",
     fontSize: 14,
+    fontWeight: 700,
   },
   feedback: {
     marginTop: 16,
@@ -510,6 +510,7 @@ const styles: Record<string, React.CSSProperties> = {
   featureDot: {
     color: "#1e88e5",
     fontWeight: 900,
+    minWidth: 16,
   },
   button: {
     width: "100%",
