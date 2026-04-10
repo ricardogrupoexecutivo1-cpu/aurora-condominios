@@ -1,6 +1,7 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { useSearchParams } from "next/navigation";
 
 type PlanCode = "start" | "pro" | "premium_multi";
 
@@ -19,7 +20,17 @@ type ApiSuccess = {
     customer_name?: string | null;
     customer_email?: string | null;
     customer_whatsapp?: string | null;
+    affiliate_ref_code?: string | null;
+    affiliate_id?: string | null;
+    commission_amount?: number | null;
+    commission_status?: string | null;
   };
+  affiliate?: {
+    id: string;
+    name: string;
+    refCode: string;
+    commissionAmount: number;
+  } | null;
 };
 
 type ApiError = {
@@ -86,7 +97,19 @@ function onlyDigits(value: string) {
   return value.replace(/\D/g, "");
 }
 
+function normalizeRefCode(value: string | null | undefined) {
+  const clean = (value || "").trim().toLowerCase();
+  if (!clean) return "";
+
+  return clean
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9_-]/g, "");
+}
+
 export default function PlanosPage() {
+  const searchParams = useSearchParams();
+
   const [customerName, setCustomerName] = useState("");
   const [customerEmail, setCustomerEmail] = useState("");
   const [customerWhatsapp, setCustomerWhatsapp] = useState("");
@@ -95,6 +118,14 @@ export default function PlanosPage() {
     type: "success" | "error" | "info";
     text: string;
   } | null>(null);
+  const [affiliateRefCode, setAffiliateRefCode] = useState("");
+
+  useEffect(() => {
+    const refFromUrl = normalizeRefCode(searchParams.get("ref"));
+    if (refFromUrl) {
+      setAffiliateRefCode(refFromUrl);
+    }
+  }, [searchParams]);
 
   const normalizedWhatsapp = useMemo(
     () => onlyDigits(customerWhatsapp),
@@ -134,6 +165,7 @@ export default function PlanosPage() {
           customerName,
           customerEmail,
           customerWhatsapp: normalizedWhatsapp,
+          affiliateRefCode: affiliateRefCode || undefined,
         }),
       });
 
@@ -144,6 +176,7 @@ export default function PlanosPage() {
           (result as ApiError)?.details?.join(" ") ||
           (result as ApiError)?.error ||
           "Não foi possível registrar o plano agora.";
+
         setFeedback({
           type: "error",
           text: errorMessage,
@@ -153,11 +186,19 @@ export default function PlanosPage() {
 
       const success = result as ApiSuccess;
 
+      let successText =
+        success.message ||
+        "Plano registrado com sucesso. Aguarde o próximo passo.";
+
+      if (success.affiliate?.refCode) {
+        successText += ` Link de afiliado identificado: ${success.affiliate.refCode}. Comissão prevista: R$ ${success.affiliate.commissionAmount.toFixed(
+          2
+        )}.`;
+      }
+
       setFeedback({
         type: "success",
-        text:
-          success.message ||
-          "Plano registrado com sucesso. Aguarde o próximo passo.",
+        text: successText,
       });
 
       if (success.nextAction === "checkout" && success.redirectTo) {
@@ -189,6 +230,12 @@ export default function PlanosPage() {
             Estrutura comercial pronta para evolução com assinatura, cobrança e
             liberação automática por plano.
           </p>
+
+          {affiliateRefCode ? (
+            <div style={styles.affiliateBanner}>
+              Link de indicação ativo: <strong>{affiliateRefCode}</strong>
+            </div>
+          ) : null}
         </div>
 
         <section style={styles.formCard}>
@@ -371,6 +418,18 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: 15,
     lineHeight: 1.6,
     maxWidth: 780,
+  },
+  affiliateBanner: {
+    marginTop: 16,
+    display: "inline-flex",
+    alignItems: "center",
+    gap: 8,
+    padding: "10px 14px",
+    borderRadius: 14,
+    background: "#eef6ff",
+    border: "1px solid #c8def7",
+    color: "#1d5f9d",
+    fontWeight: 800,
   },
   formCard: {
     background: "#ffffff",
