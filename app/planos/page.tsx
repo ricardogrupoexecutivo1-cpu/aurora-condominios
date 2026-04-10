@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { Suspense, useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "next/navigation";
 
 type PlanCode = "start" | "pro" | "premium_multi";
@@ -107,7 +107,7 @@ function normalizeRefCode(value: string | null | undefined) {
     .replace(/[^a-z0-9_-]/g, "");
 }
 
-export default function PlanosPage() {
+function PlanosContent() {
   const searchParams = useSearchParams();
 
   const [customerName, setCustomerName] = useState("");
@@ -361,6 +361,28 @@ export default function PlanosPage() {
         </section>
       </section>
     </main>
+  );
+}
+
+function PlanosFallback() {
+  return (
+    <main style={styles.page}>
+      <section style={styles.wrapper}>
+        <div style={styles.hero}>
+          <div style={styles.heroBadge}>Planos</div>
+          <h1 style={styles.heroTitle}>Planos Aurora Condomínios</h1>
+          <p style={styles.heroText}>Carregando planos...</p>
+        </div>
+      </section>
+    </main>
+  );
+}
+
+export default function PlanosPage() {
+  return (
+    <Suspense fallback={<PlanosFallback />}>
+      <PlanosContent />
+    </Suspense>
   );
 }
 
