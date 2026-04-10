@@ -25,9 +25,22 @@ type SubscriptionRow = {
   expires_at: string | null;
   paid_at: string | null;
   canceled_at: string | null;
+  affiliate_ref_code?: string | null;
+  affiliate_id?: string | null;
+  commission_amount?: number | null;
+  commission_status?: string | null;
   metadata: Record<string, unknown> | null;
   created_at: string;
   updated_at: string;
+};
+
+type AffiliateRow = {
+  id: string;
+  name: string;
+  email: string | null;
+  whatsapp: string | null;
+  ref_code: string;
+  is_active: boolean;
 };
 
 type CreateSubscriptionBody = {
@@ -35,7 +48,10 @@ type CreateSubscriptionBody = {
   customerName?: string;
   customerEmail?: string;
   customerWhatsapp?: string;
+  affiliateRefCode?: string;
 };
+
+const COMMISSION_AMOUNT_DEFAULT = 10;
 
 const PLAN_CONFIG: Record<
   PlanCode,
@@ -48,6 +64,7 @@ const PLAN_CONFIG: Record<
     paymentProvider: "internal" | "asaas";
     checkoutUrlEnv?: string;
     requiresWhatsapp: boolean;
+    eligibleForCommission: boolean;
     metadata: Record<string, unknown>;
   }
 > = {
@@ -59,6 +76,7 @@ const PLAN_CONFIG: Record<
     statusOnCreate: "active",
     paymentProvider: "internal",
     requiresWhatsapp: false,
+    eligibleForCommission: false,
     metadata: {
       source: "planos_page",
       product: "aurora_condominios",
@@ -74,6 +92,7 @@ const PLAN_CONFIG: Record<
     paymentProvider: "asaas",
     checkoutUrlEnv: "ASAAS_PRO_CHECKOUT_URL",
     requiresWhatsapp: true,
+    eligibleForCommission: true,
     metadata: {
       source: "planos_page",
       product: "aurora_condominios",
@@ -89,6 +108,7 @@ const PLAN_CONFIG: Record<
     paymentProvider: "asaas",
     checkoutUrlEnv: "ASAAS_PREMIUM_CHECKOUT_URL",
     requiresWhatsapp: true,
+    eligibleForCommission: true,
     metadata: {
       source: "planos_page",
       product: "aurora_condominios",
@@ -137,6 +157,16 @@ function normalizeName(value?: string): string | null {
   return clean || null;
 }
 
+function normalizeRefCode(value?: string): string | null {
+  const clean = (value || "").trim().toLowerCase();
+  if (!clean) return null;
+
+  return clean
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9_-]/g, "");
+}
+
 function getCheckoutUrl(plan: PlanCode): string | null {
   const config = PLAN_CONFIG[plan];
 
@@ -160,6 +190,58 @@ function getSuccessMessage(plan: PlanCode, checkoutUrl: string | null): string {
   }
 
   return `Plano ${config.label} registrado com sucesso. Próximo passo: conectar checkout e liberação automática.`;
+}
+
+async function findAffiliateByRefCode(
+  supabase: SupabaseClient,
+  refCode: string | null
+): Promise<AffiliateRow | null> {
+  if (!refCode) return null;
+
+  const { data, error } = await supabase
+    .from("affiliates")
+    .select("id, name, email, whatsapp, ref_code, is_active")
+    .eq("ref_code", refCode)
+    .eq("is_active", true)
+    .maybeSingle();
+
+  if (error) {
+    throw error;
+  }
+
+  return (data as AffiliateRow | null) || null;
+}
+
+async function createCommissionIfEligible(params: {
+  supabase: SupabaseClient;
+  subscriptionId: string;
+  affiliate: AffiliateRow | null;
+  plan: PlanCode;
+  refCode: string | null;
+}) {
+  const { supabase, subscriptionId, affiliate, plan, refCode } = params;
+  const planConfig = PLAN_CONFIG[plan];
+
+  if (!planConfig.eligibleForCommission) {
+    return;
+  }
+
+  if (!affiliate || !refCode) {
+    return;
+  }
+
+  const { error } = await supabase.from("affiliate_commissions").insert({
+    affiliate_id: affiliate.id,
+    subscription_id: subscriptionId,
+    ref_code: refCode,
+    commission_amount: COMMISSION_AMOUNT_DEFAULT,
+    status: "pending",
+    notes: `Comissão automática criada para o plano ${planConfig.label}.`,
+  });
+
+  if (error) {
+    throw error;
+  }
 }
 
 export async function GET() {
@@ -212,6 +294,7 @@ export async function POST(request: NextRequest) {
     const customerName = normalizeName(body?.customerName);
     const customerEmail = normalizeEmail(body?.customerEmail);
     const customerWhatsapp = normalizeWhatsapp(body?.customerWhatsapp);
+    const affiliateRefCode = normalizeRefCode(body?.affiliateRefCode);
 
     if (config.requiresWhatsapp && !customerWhatsapp) {
       return NextResponse.json(
@@ -226,6 +309,8 @@ export async function POST(request: NextRequest) {
 
     const checkoutUrl = getCheckoutUrl(plan);
     const startedAt = new Date().toISOString();
+    const supabase = getSupabaseAdmin();
+    const affiliate = await findAffiliateByRefCode(supabase, affiliateRefCode);
 
     const payload = {
       user_id: null,
@@ -245,13 +330,21 @@ export async function POST(request: NextRequest) {
       expires_at: null,
       paid_at: null,
       canceled_at: null,
+      affiliate_ref_code: affiliate ? affiliate.ref_code : affiliateRefCode,
+      affiliate_id: affiliate ? affiliate.id : null,
+      commission_amount:
+        affiliate && config.eligibleForCommission
+          ? COMMISSION_AMOUNT_DEFAULT
+          : null,
+      commission_status:
+        affiliate && config.eligibleForCommission ? "pending" : null,
       metadata: {
         ...config.metadata,
         checkout_configured: Boolean(checkoutUrl),
+        affiliate_ref_code: affiliate ? affiliate.ref_code : affiliateRefCode,
+        affiliate_found: Boolean(affiliate),
       },
     };
-
-    const supabase = getSupabaseAdmin();
 
     const { data, error } = await supabase
       .from("subscriptions")
@@ -263,13 +356,34 @@ export async function POST(request: NextRequest) {
       throw error;
     }
 
+    await createCommissionIfEligible({
+      supabase,
+      subscriptionId: (data as SubscriptionRow).id,
+      affiliate,
+      plan,
+      refCode: affiliate ? affiliate.ref_code : null,
+    });
+
     return NextResponse.json({
       ok: true,
       message: getSuccessMessage(plan, checkoutUrl),
       subscription: data as SubscriptionRow,
       checkoutUrl,
       redirectTo: checkoutUrl,
-      nextAction: plan === "start" ? "activated" : checkoutUrl ? "checkout" : "configure_checkout",
+      affiliate: affiliate
+        ? {
+            id: affiliate.id,
+            name: affiliate.name,
+            refCode: affiliate.ref_code,
+            commissionAmount: COMMISSION_AMOUNT_DEFAULT,
+          }
+        : null,
+      nextAction:
+        plan === "start"
+          ? "activated"
+          : checkoutUrl
+            ? "checkout"
+            : "configure_checkout",
     });
   } catch (error: any) {
     console.error("ERRO GERAL POST /api/subscriptions:", error);
